@@ -15,6 +15,17 @@ export const AGENT_PATHS = {
 
 export type ValidAgent = keyof typeof AGENT_PATHS;
 
+// Canonical target names — used by compatibility validation.
+export const CANONICAL_TARGETS = [
+  'claude',
+  'codex',
+  'opencode',
+  'gemini',
+  'anti-gravity',
+  'openclaw',
+  'hermes',
+] as const satisfies readonly ValidAgent[];
+
 export function isValidAgent(s: string): s is ValidAgent {
   return s in AGENT_PATHS;
 }

@@ -21,6 +21,7 @@ import { runInstalledTUI } from './tui/installed';
 import { getDefaultTarget } from './config';
 import { readManifest, reconcile } from './manifest';
 import { enableTabJumpForGroupMultiselect, enableWindowsSafeClose } from './clack-patch';
+import { formatCompatibility } from './compat';
 
 enableWindowsSafeClose();
 enableTabJumpForGroupMultiselect();
@@ -64,8 +65,8 @@ async function printPlainTable() {
     console.log(chalk.green('Successfully loaded Open Directory registry!\n'));
 
     const table = new Table({
-      head: [chalk.hex('#856FE6').bold('Skill Name'), chalk.hex('#856FE6').bold('Description')],
-      colWidths: [35, 75],
+      head: [chalk.hex('#856FE6').bold('Skill Name'), chalk.hex('#856FE6').bold('Description'), chalk.hex('#856FE6').bold('Compatibility')],
+      colWidths: [30, 60, 25],
       wordWrap: true,
       chars: noColor() ? {
         'top': '-', 'top-mid': '+', 'top-left': '+', 'top-right': '+',
@@ -78,7 +79,8 @@ async function printPlainTable() {
     for (const skill of skills) {
       let desc = skill.description || '';
       if (desc.length > 100) desc = desc.substring(0, 97) + '...';
-      table.push([chalk.white.bold(skill.name), desc]);
+      const compat = formatCompatibility(skill.compatibility, skill.hasCompatibility === true);
+      table.push([chalk.white.bold(skill.name), desc, compat]);
     }
 
     console.log(table.toString());
@@ -167,6 +169,8 @@ program.command('install <skill>')
       if (result.error?.message.includes('Unsupported target')) {
         console.error(chalk.red(`Error: ${result.error.message}`));
         console.log(chalk.gray(`Supported targets: ${SUPPORTED_TARGETS}`));
+      } else if (result.error?.message.includes('supports:')) {
+        console.error(chalk.red(`Error: ${result.error.message}`));
       } else if (result.error?.message.includes('not found')) {
         console.error(chalk.red(`Error: ${result.error.message}`));
         console.log(chalk.gray(`Try running \`${chalk.white('npx "@opendirectory.dev/skills" list')}\` to see available skills.`));

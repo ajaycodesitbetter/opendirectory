@@ -1,7 +1,8 @@
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
-import { detectAgents, AGENT_PATHS, ValidAgent } from '../detect';
+import { detectAgents, AGENT_PATHS } from '../detect';
 import { getDefaultTarget, setDefaultTarget } from '../config';
+import { normalizeTarget } from '../compat';
 
 export class CancelledError extends Error {
   constructor() {
@@ -10,14 +11,16 @@ export class CancelledError extends Error {
   }
 }
 
-export async function pickTarget(): Promise<string> {
+export async function pickTarget(pickerOptions: { disabledTargets?: ReadonlySet<string> } = {}): Promise<string> {
   const agents = await detectAgents();
-  const defaultTarget = await getDefaultTarget();
+  const configuredTarget = await getDefaultTarget();
+  const defaultTarget = configuredTarget ? normalizeTarget(configuredTarget) : undefined;
 
-  const options = Object.keys(AGENT_PATHS).map(name => {
+  const targetOptions = Object.keys(AGENT_PATHS).map(name => {
     const agent = agents.find(a => a.name === name);
     const isDefault = name === defaultTarget;
     const isDetected = agent?.installed;
+    const isUnsupported = pickerOptions.disabledTargets?.has(name) ?? false;
 
     let label = name;
     if (isDefault) {
@@ -25,23 +28,35 @@ export async function pickTarget(): Promise<string> {
     } else if (isDetected) {
       label += chalk.green(' (detected)');
     }
+    if (isUnsupported) {
+      label += chalk.red(' (unsupported)');
+    }
 
-    return { value: name, label };
+    return {
+      value: name,
+      label,
+      disabled: isUnsupported,
+    };
   });
 
-  let initialValue = options[0].value;
-  if (defaultTarget && options.some(o => o.value === defaultTarget)) {
+  const enabledOptions = targetOptions.filter(option => !option.disabled);
+  let initialValue = enabledOptions[0]?.value;
+  if (defaultTarget && enabledOptions.some(o => o.value === defaultTarget)) {
     initialValue = defaultTarget;
   } else {
-    const detected = agents.find(a => a.installed);
+    const detected = agents.find(a => a.installed && enabledOptions.some(option => option.value === a.name));
     if (detected) {
       initialValue = detected.name;
     }
   }
 
+  if (!initialValue) {
+    throw new Error('No target supports every selected skill. Return to the skill picker and choose a compatible set.');
+  }
+
   const target = await p.select({
     message: 'Select target agent:',
-    options,
+    options: targetOptions,
     initialValue
   });
 

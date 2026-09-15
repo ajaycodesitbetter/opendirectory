@@ -9,6 +9,9 @@ import { terminalWidth, isInteractive, noColor } from '../tty';
 import { categoryFor, CATEGORY_ORDER } from '../categories';
 import { printRandomTip } from '../tips';
 import { BRAILLE_SPINNER_FRAMES, renderProgressBar } from '../animations';
+import { normalizeTarget } from '../compat';
+import { getSkillAvailability } from './compatibility';
+import { AGENT_PATHS, isValidAgent } from '../detect';
 
 const BACK = Symbol('back');
 
@@ -112,11 +115,17 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
       process.exit(0);
     }
 
-    let target = opts.target;
     let skillNames: string[] | null = null;
+    let target: string | undefined;
+    let requestedTarget = opts.target ? normalizeTarget(opts.target) : undefined;
+    if (requestedTarget && !isValidAgent(requestedTarget)) {
+      throw new Error(`Unsupported target '${opts.target}'.`);
+    }
 
-    modeLoop:
+    selectionLoop:
     while (true) {
+      modeLoop:
+      while (true) {
       await setTimeout(10);
       const mode = await p.select({
         message: 'How would you like to browse?',
@@ -139,23 +148,44 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
           if (result === BACK) continue modeLoop;
           if ((result as string[]).length === 0) continue;
           skillNames = result as string[];
-          break modeLoop;
+          break;
         }
       } else {
         const result = await searchAllSkills(skills);
         if (p.isCancel(result)) continue;
         if ((result as string[]).length === 0) continue;
         skillNames = result as string[];
-        break;
       }
-    }
+      break;
+      }
 
-    if (!target) {
-      target = await pickTarget();
+      const selectedSkills = skills.filter(skill => skillNames!.includes(skill.name));
+      const disabledTargets = new Set(
+        Object.keys(AGENT_PATHS).filter(candidate =>
+          getSkillAvailability(selectedSkills, candidate).unavailable.length > 0,
+        ),
+      );
+
+      if (disabledTargets.size === Object.keys(AGENT_PATHS).length) {
+        p.note('No target supports every selected skill. Choose a different set of skills.', 'Compatibility');
+        continue selectionLoop;
+      }
+
+      target = requestedTarget ?? await pickTarget({ disabledTargets });
+      const preflight = getSkillAvailability(selectedSkills, target);
+      if (preflight.unavailable.length > 0) {
+        p.note(
+          `${preflight.unavailable.map(skill => skill.name).join(', ')} cannot be installed for ${target}. Choose a different set of skills.`,
+          'Compatibility',
+        );
+        requestedTarget = undefined;
+        continue selectionLoop;
+      }
+      break;
     }
 
     p.note(
-      `Installing ${skillNames.length} skill${skillNames.length === 1 ? '' : 's'} to ${chalk.hex(BRAND_PURPLE).bold(target)}\n${skillNames.join(', ')}`,
+      `Installing ${skillNames.length} skill${skillNames.length === 1 ? '' : 's'} to ${chalk.hex(BRAND_PURPLE).bold(target!)}\n${skillNames.join(', ')}`,
       'Summary'
     );
 
@@ -179,7 +209,7 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
       const sp = p.spinner(buildSpinnerOptions());
       const progress = renderProgressBar(i, total);
       sp.start(`${progress}  ${name}`);
-      const result = await installSkill(name, target);
+      const result = await installSkill(name, target!);
       const finalProgress = renderProgressBar(i + 1, total);
       if (result.success) {
         sp.stop(`${finalProgress}  ${chalk.hex(BRAND_PURPLE).bold(name)} ${chalk.dim('installed')}`);

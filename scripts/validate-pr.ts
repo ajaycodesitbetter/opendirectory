@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { parseFrontmatter } from './lib/frontmatter';
+import { parseCompatibility } from '../packages/cli/src/compat';
 
 const skillsDir = path.join(process.cwd(), 'skills');
 
@@ -129,6 +130,11 @@ function validateSkills() {
           }
           if (typeof parsed.data.description !== 'string') {
             errors.push(`Error: Skill '${entry.name}' is missing 'description' in SKILL.md frontmatter.`);
+          }
+          const hasCompatibility = Object.prototype.hasOwnProperty.call(parsed.data, 'compatibility');
+          const compatibility = parseCompatibility(parsed.data.compatibility, hasCompatibility);
+          if (!compatibility.ok) {
+            errors.push(`Error: Skill '${entry.name}' has invalid compatibility: ${compatibility.error}`);
           }
         } catch (err: any) {
           errors.push(`Error: Failed to parse SKILL.md for '${entry.name}': ${err.message}`);

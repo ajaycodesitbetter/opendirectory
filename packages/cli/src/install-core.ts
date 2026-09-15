@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { loadRegistry } from './registry';
 import { ValidAgent, isValidAgent, getAgentSkillsDir } from './detect';
 import * as manifest from './manifest';
+import { normalizeTarget, validateCompatibility } from './compat';
 
 export interface InstallResult {
   skillName: string;
@@ -14,7 +15,7 @@ export interface InstallResult {
 
 export async function installSkill(skillName: string, target: string): Promise<InstallResult> {
   try {
-    const normalizedTarget = target.toLowerCase();
+    const normalizedTarget = normalizeTarget(target);
     if (!isValidAgent(normalizedTarget)) {
       return { skillName, target, path: '', success: false, error: new Error(`Unsupported target '${target}'.`) };
     }
@@ -88,6 +89,18 @@ export async function installSkill(skillName: string, target: string): Promise<I
 
     const registrySkills = await loadRegistry();
     const registryEntry = registrySkills.find(s => s.name === skillName);
+
+    // --- Compatibility guard (must run BEFORE any fs mutation) ---
+    const compatResult = validateCompatibility(
+      skillName,
+      registryEntry?.compatibility,
+      registryEntry?.hasCompatibility === true,
+      normalizedTarget,
+    );
+    if (!compatResult.ok) {
+      return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(compatResult.error) };
+    }
+    // --- End compatibility guard ---
 
     const manifestName = registryEntry ? skillName : path.basename(skillDir);
     const destFolderName = path.basename(skillDir);

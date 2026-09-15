@@ -4,9 +4,10 @@ import { loadRegistry } from './registry';
 import * as manifest from './manifest';
 import { installSkill, InstallResult } from './install-core';
 import { ValidAgent, isValidAgent, getAgentSkillsDir } from './detect';
+import { normalizeTarget, validateCompatibility } from './compat';
 
 export async function updateSkill(name: string, target: string): Promise<InstallResult> {
-  const normalizedTarget = target.toLowerCase();
+  const normalizedTarget = normalizeTarget(target);
   if (!isValidAgent(normalizedTarget)) {
     return { skillName: name, target, path: '', success: false, error: new Error(`Unsupported target '${target}'.`) };
   }
@@ -33,6 +34,18 @@ export async function updateSkill(name: string, target: string): Promise<Install
     if (rel.startsWith('..') || path.isAbsolute(rel) || rel.length === 0) {
       return { skillName: name, target: normalizedTarget, path: '', success: false, error: new Error(`Refusing to update '${resolved}': path is outside the agent's skills directory.`) };
     }
+
+    // --- Compatibility guard (must run BEFORE the backup rename) ---
+    const compatResult = validateCompatibility(
+      name,
+      registrySkill.compatibility,
+      registrySkill.hasCompatibility === true,
+      normalizedTarget,
+    );
+    if (!compatResult.ok) {
+      return { skillName: name, target: normalizedTarget, path: '', success: false, error: new Error(compatResult.error) };
+    }
+    // --- End compatibility guard ---
 
     originalPath = resolved;
     backupPath = `${resolved}.bak.${process.pid}.${Date.now()}`;

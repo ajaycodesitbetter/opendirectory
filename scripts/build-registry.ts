@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
+import { parseFrontmatter } from '../packages/cli/src/frontmatter';
+import { parseCompatibility } from '../packages/cli/src/compat';
 
 const SkillSchema = z.object({
   name: z.string(),
@@ -9,6 +11,7 @@ const SkillSchema = z.object({
   author: z.string().optional().default('Unknown'),
   version: z.string().optional().default('0.0.1'),
   path: z.string(),
+  compatibility: z.unknown().optional(),
 });
 
 type Skill = z.infer<typeof SkillSchema>;
@@ -17,27 +20,8 @@ const SKILLS_DIR = path.join(process.cwd(), 'skills');
 const OUTPUT_FILE = path.join(process.cwd(), 'packages', 'cli', 'registry.json');
 
 function extractMetadataFromMarkdown(content: string): any {
-  const metadata: any = {};
-  const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
-  
-  let body = content;
-  if (frontmatterMatch) {
-    const frontmatter = frontmatterMatch[1];
-    body = content.slice(frontmatterMatch[0].length);
-    
-    const lines = frontmatter.split('\n');
-    for (const line of lines) {
-      const [key, ...valueParts] = line.split(':');
-      if (key && valueParts.length > 0) {
-        const value = valueParts.join(':').trim();
-        if (value.startsWith('[') && value.endsWith(']')) {
-          metadata[key.trim()] = value.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
-        } else {
-          metadata[key.trim()] = value.replace(/^["']|["']$/g, '');
-        }
-      }
-    }
-  }
+  const { data, content: body } = parseFrontmatter(content);
+  const metadata: any = flattenFrontmatterMetadata(data);
 
   if (!metadata.description) {
     const lines = body.split('\n').map(line => line.trim()).filter(line => line.length > 0);
@@ -46,6 +30,18 @@ function extractMetadataFromMarkdown(content: string): any {
   }
 
   return metadata;
+}
+
+function flattenFrontmatterMetadata(data: Record<string, unknown>): Record<string, unknown> {
+  const nested = data.metadata;
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) {
+    return data;
+  }
+
+  // Some skills keep author/version under `metadata`; retain top-level fields
+  // as the explicit override while exposing nested values to the registry schema.
+  const { metadata: _nestedMetadata, ...topLevel } = data;
+  return { ...(nested as Record<string, unknown>), ...topLevel };
 }
 
 function buildRegistry() {
@@ -139,6 +135,13 @@ function buildRegistry() {
       }
     }
     metadata.name = folder;
+
+    const hasCompatibility = Object.prototype.hasOwnProperty.call(metadata, 'compatibility');
+    const compatibility = parseCompatibility(metadata.compatibility, hasCompatibility);
+    if (!compatibility.ok) {
+      throw new Error(`Skill '${folder}' has an invalid compatibility declaration: ${compatibility.error}`);
+    }
+    if (hasCompatibility) metadata.compatibility = compatibility.targets;
 
     // Auto-generate tags based on description keywords if tags are empty
     if (!metadata.tags || metadata.tags.length === 0) {
