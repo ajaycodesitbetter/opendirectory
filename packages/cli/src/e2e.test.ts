@@ -159,11 +159,12 @@ test('update is idempotent (replaces installed skill in place)', async () => {
 
 const COMPAT_FIXTURE_DIR = path.join(__dirname, '..', 'skills', 'test-compat-fixture');
 
-function createCompatFixture(frontmatter: string) {
+function createCompatFixture(frontmatter: string, closeFrontmatter = true) {
   fs.mkdirSync(COMPAT_FIXTURE_DIR, { recursive: true });
+  const closing = closeFrontmatter ? '\n---\n\n# Test Skill\nThis is a test fixture.\n' : '\n';
   fs.writeFileSync(
     path.join(COMPAT_FIXTURE_DIR, 'SKILL.md'),
-    `---\nname: test-compat-fixture\ndescription: Test fixture for compatibility\n${frontmatter}\n---\n\n# Test Skill\nThis is a test fixture.\n`,
+    `---\nname: test-compat-fixture\ndescription: Test fixture for compatibility\n${frontmatter}${closing}`,
   );
 }
 
@@ -387,5 +388,58 @@ test('malformed compatibility YAML rejects update before backup or mutation', ()
     expect(fs.readdirSync(path.dirname(skillPath)).some(entry => entry.includes('.bak.'))).toBe(false);
   } finally {
     removeCompatFixture();
+  }
+});
+
+test('unterminated compatibility frontmatter rejects install before mutation', () => {
+  try {
+    createCompatFixture('compatibility: [codex', false);
+    expect.assertions(4);
+    try {
+      execSync('node dist/index.js install test-compat-fixture --target codex', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('missing closing --- delimiter');
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.codex/skills/test-compat-fixture'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
+  } finally {
+    removeCompatFixture();
+  }
+});
+
+test('unterminated compatibility frontmatter rejects update before mutation', () => {
+  try {
+    createCompatFixture('');
+    execSync('node dist/index.js install test-compat-fixture --target codex', { stdio: 'pipe' });
+    const skillPath = path.join(tmpHome, '.codex/skills/test-compat-fixture');
+    const manifestPath = path.join(tmpHome, '.opendirectory/installed.json');
+    const skillContentBefore = fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf-8');
+    const manifestBefore = fs.readFileSync(manifestPath, 'utf-8');
+
+    createCompatFixture('compatibility: [codex', false);
+    expect.assertions(6);
+    try {
+      execSync('node dist/index.js update test-compat-fixture --target codex', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('missing closing --- delimiter');
+    }
+    expect(fs.existsSync(skillPath)).toBe(true);
+    expect(fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf-8')).toBe(skillContentBefore);
+    expect(fs.readFileSync(manifestPath, 'utf-8')).toBe(manifestBefore);
+    expect(fs.readdirSync(path.dirname(skillPath)).some(entry => entry.includes('.bak.'))).toBe(false);
+  } finally {
+    removeCompatFixture();
+  }
+});
+
+test.each(['constructor', 'toString'])('unsupported inherited target %s returns an actionable error', target => {
+  expect.assertions(2);
+  try {
+    execSync(`node dist/index.js install ${UNIVERSAL_SKILL} --target ${target}`, { stdio: 'pipe' });
+  } catch (error: any) {
+    expect(error.status).toBe(1);
+    expect(error.stderr.toString()).toContain(`Unsupported target '${target}'.`);
   }
 });

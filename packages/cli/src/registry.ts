@@ -52,6 +52,29 @@ export function parseSkillFrontmatter(content: string): Partial<Skill> | null {
   return result;
 }
 
+export function resolveCompatibility(
+  fromRegistry: Record<string, unknown> | undefined,
+  fromFrontmatter: Partial<Skill> | null,
+): Pick<Skill, 'compatibility' | 'hasCompatibility' | 'frontmatterError'> {
+  const localHasCompatibility = fromFrontmatter?.hasCompatibility === true;
+  const frontmatterError = fromFrontmatter?.frontmatterError;
+  const registryHasCompatibility = hasOwn(fromRegistry, 'compatibility');
+  const useLocalDeclaration = localHasCompatibility || Boolean(frontmatterError);
+  const hasCompatibility = useLocalDeclaration || registryHasCompatibility;
+  const rawCompatibility = useLocalDeclaration
+    ? fromFrontmatter?.compatibility
+    : fromRegistry?.compatibility;
+  const compatibilityResult = parseCompatibility(rawCompatibility, hasCompatibility);
+
+  return {
+    compatibility: compatibilityResult.ok && hasCompatibility
+      ? compatibilityResult.targets
+      : rawCompatibility,
+    ...(hasCompatibility && { hasCompatibility }),
+    ...(frontmatterError && { frontmatterError }),
+  };
+}
+
 export async function loadRegistry(): Promise<Skill[]> {
   const root = getProjectRoot();
   const registryPath = path.join(root, 'registry.json');
@@ -81,15 +104,7 @@ export async function loadRegistry(): Promise<Skill[]> {
     seen.add(name);
     const fromRegistry = registryMap.get(name);
     const fromFrontmatter = await parseSkillMd(dir);
-    const registryHasCompatibility = hasOwn(fromRegistry, 'compatibility');
-    const hasCompatibility = registryHasCompatibility || fromFrontmatter?.hasCompatibility === true;
-    const rawCompatibility = registryHasCompatibility
-      ? fromRegistry.compatibility
-      : fromFrontmatter?.compatibility;
-    const compatibilityResult = parseCompatibility(rawCompatibility, hasCompatibility);
-    const compatibility = compatibilityResult.ok && hasCompatibility
-      ? compatibilityResult.targets
-      : rawCompatibility;
+    const resolvedCompatibility = resolveCompatibility(fromRegistry, fromFrontmatter);
     skills.push({
       name,
       description: cleanDescription(fromRegistry?.description || fromFrontmatter?.description || `Skill: ${name}`),
@@ -97,8 +112,7 @@ export async function loadRegistry(): Promise<Skill[]> {
       author: fromRegistry?.author || fromFrontmatter?.author || 'OpenDirectory',
       version: fromRegistry?.version || fromFrontmatter?.version || 'unknown',
       path: fromRegistry?.path || `skills/${name}`,
-      ...(fromFrontmatter?.frontmatterError && { frontmatterError: fromFrontmatter.frontmatterError }),
-      ...(hasCompatibility && { compatibility, hasCompatibility }),
+      ...resolvedCompatibility,
     });
   }
 

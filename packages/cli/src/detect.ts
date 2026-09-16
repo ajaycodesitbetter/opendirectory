@@ -27,7 +27,7 @@ export const CANONICAL_TARGETS = [
 ] as const satisfies readonly ValidAgent[];
 
 export function isValidAgent(s: string): s is ValidAgent {
-  return s in AGENT_PATHS;
+  return Object.prototype.hasOwnProperty.call(AGENT_PATHS, s);
 }
 
 // Base agent dir (e.g., ~/.claude) — for detection.

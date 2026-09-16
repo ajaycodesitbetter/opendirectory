@@ -6,11 +6,17 @@ export interface FrontmatterDocument {
 }
 
 const FRONTMATTER_PATTERN = /^---[^\S\r\n]*\r?\n([\s\S]*?)\r?\n---[^\S\r\n]*(?:\r?\n|$)/;
+const FRONTMATTER_OPENING_PATTERN = /^---[^\S\r\n]*(?:\r?\n|$)/;
 
 export function parseFrontmatter(source: string): FrontmatterDocument {
   const cleaned = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
   const match = FRONTMATTER_PATTERN.exec(cleaned);
-  if (!match) return { data: {}, content: cleaned };
+  if (!match) {
+    if (FRONTMATTER_OPENING_PATTERN.test(cleaned)) {
+      throw new TypeError('Invalid YAML frontmatter: missing closing --- delimiter.');
+    }
+    return { data: {}, content: cleaned };
+  }
 
   const document = parseDocument(match[1]);
   if (document.errors.length > 0) {
