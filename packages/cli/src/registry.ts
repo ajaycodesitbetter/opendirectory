@@ -26,8 +26,10 @@ async function parseSkillMd(skillDir: string): Promise<Partial<Skill> | null> {
     const source = await loadSkillSource(skillDir);
     if (!source) return null;
     return parseSkillFrontmatterDocument(source.frontmatter, true);
-  } catch {
-    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const readError = `Unable to load discovered SKILL.md: ${message}`;
+    return { compatibilityState: { kind: 'invalid', error: readError }, frontmatterError: readError };
   }
 }
 

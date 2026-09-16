@@ -13,9 +13,7 @@ export function getSkillAvailability(skills: Skill[], target: string): SkillAvai
   for (const skill of skills) {
     const result = validateCompatibilityState(
       skill.name,
-      skill.compatibilityState ?? (skill.hasCompatibility
-        ? { kind: 'valid', targets: skill.compatibility as string[] }
-        : { kind: 'missing' }),
+      skill.compatibilityState ?? { kind: 'invalid', error: 'Compatibility state is unavailable.' },
       target,
     );
     (result.ok ? available : unavailable).push(skill);

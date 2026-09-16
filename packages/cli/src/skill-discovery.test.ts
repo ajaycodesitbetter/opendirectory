@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { findSkillSource, findSkillSourceSync } from './skill-discovery';
+import { findSkillSource, findSkillSourceSync, loadSkillSource } from './skill-discovery';
 
 const roots: string[] = [];
 
@@ -54,5 +54,17 @@ describe('skill source discovery', () => {
     const root = path.join(os.tmpdir(), `od-missing-${randomUUID()}`);
     expect(findSkillSourceSync(root)).toBeNull();
     expect(await findSkillSource(root)).toBeNull();
+  });
+
+  test('source read failures produce an invalid compatibility state', async () => {
+    const root = makeRoot();
+    writeSkill(root, []);
+    const loaded = await loadSkillSource(root, async () => {
+      throw new Error('EACCES: permission denied');
+    });
+    expect(loaded?.frontmatter.compatibility).toEqual({
+      kind: 'invalid',
+      error: expect.stringContaining('Unable to read discovered SKILL.md'),
+    });
   });
 });

@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { getSkillAvailability } from './compatibility';
-import { targetForSelection } from './browse';
+import { resolveBrowseTarget } from './browse';
+import { shouldPersistDefault } from './target-picker';
 import type { Skill } from '../registry';
 
 const skill = (name: string, compatibility?: unknown, hasCompatibility = false): Skill => ({
@@ -10,7 +11,11 @@ const skill = (name: string, compatibility?: unknown, hasCompatibility = false):
   author: 'test',
   version: '1.0.0',
   path: `skills/${name}`,
-  ...(hasCompatibility && { compatibility, hasCompatibility }),
+  compatibilityState: !hasCompatibility
+    ? { kind: 'missing' }
+    : name === 'invalid-alias'
+      ? { kind: 'invalid', error: 'unknown target "claude-code"' }
+      : { kind: 'valid', targets: compatibility as string[] },
 });
 
 describe('getSkillAvailability', () => {
@@ -27,7 +32,16 @@ describe('getSkillAvailability', () => {
   });
 });
 
-test('preserves an explicitly requested target when returning to selection', () => {
-  expect(targetForSelection('claude', 'codex')).toBe('claude');
-  expect(targetForSelection(undefined, 'codex')).toBe('codex');
+test('preserves an explicitly requested target without invoking the picker', async () => {
+  const pick = vi.fn(async () => 'codex');
+  expect(await resolveBrowseTarget('claude', pick)).toBe('claude');
+  expect(pick).not.toHaveBeenCalled();
+  expect(await resolveBrowseTarget(undefined, pick)).toBe('codex');
+  expect(pick).toHaveBeenCalledTimes(1);
+});
+
+test('does not persist a default target during an explicit-target session', () => {
+  expect(shouldPersistDefault('claude', true)).toBe(false);
+  expect(shouldPersistDefault(undefined, true)).toBe(true);
+  expect(shouldPersistDefault(undefined, false)).toBe(false);
 });

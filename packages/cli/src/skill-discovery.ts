@@ -12,6 +12,8 @@ export interface LoadedSkillSource extends SkillSource {
   frontmatter: SkillFrontmatterDocument;
 }
 
+export type SkillFileReader = (skillMdPath: string) => Promise<string>;
+
 /** Maximum directory depth below a skill root at which SKILL.md may be found. */
 export const MAX_SKILL_SOURCE_DEPTH = 4;
 
@@ -70,11 +72,18 @@ function findSkillSourceSyncAt(dir: string, depth: number): SkillSource | null {
   return null;
 }
 
-export async function loadSkillSource(repoDir: string): Promise<LoadedSkillSource | null> {
+export async function loadSkillSource(
+  repoDir: string,
+  readFile: SkillFileReader = skillMdPath => fs.readFile(skillMdPath, 'utf-8'),
+): Promise<LoadedSkillSource | null> {
   const source = await findSkillSource(repoDir);
   if (!source) return null;
-  const content = await fs.readFile(source.skillMdPath, 'utf-8');
-  return { ...source, frontmatter: inspectSkillFrontmatter(content) };
+  try {
+    const content = await readFile(source.skillMdPath);
+    return { ...source, frontmatter: inspectSkillFrontmatter(content) };
+  } catch (error) {
+    return sourceReadError(source, error);
+  }
 }
 
 async function sourceAt(skillDir: string): Promise<SkillSource | null> {
@@ -85,6 +94,21 @@ async function sourceAt(skillDir: string): Promise<SkillSource | null> {
   } catch {
     return null;
   }
+}
+
+function sourceReadError(source: SkillSource, error: unknown): LoadedSkillSource {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    ...source,
+    frontmatter: {
+      data: {},
+      content: '',
+      compatibility: {
+        kind: 'invalid',
+        error: `Unable to read discovered SKILL.md '${source.skillMdPath}': ${message}`,
+      },
+    },
+  };
 }
 
 function sourceAtSync(skillDir: string): SkillSource | null {

@@ -17,8 +17,12 @@ const BACK = Symbol('back');
 
 const BRAND_PURPLE = '#856FE6';
 
-export function targetForSelection(requestedTarget: string | undefined, pickedTarget: string): string {
-  return requestedTarget ?? pickedTarget;
+export async function resolveBrowseTarget(
+  requestedTarget: string | undefined,
+  pick: () => Promise<string>,
+): Promise<string> {
+  if (requestedTarget) return requestedTarget;
+  return pick();
 }
 
 function truncate(text: string, len: number): string {
@@ -175,7 +179,7 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
         continue selectionLoop;
       }
 
-      target = targetForSelection(requestedTarget, await pickTarget({ disabledTargets }));
+      target = await resolveBrowseTarget(requestedTarget, () => pickTarget({ disabledTargets }));
       const preflight = getSkillAvailability(selectedSkills, target);
       if (preflight.unavailable.length > 0) {
         p.note(

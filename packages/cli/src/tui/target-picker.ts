@@ -1,8 +1,17 @@
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
-import { detectAgents, AGENT_PATHS } from '../detect';
+import { detectAgents, AGENT_PATHS, isValidAgent } from '../detect';
 import { getDefaultTarget, setDefaultTarget } from '../config';
 import { normalizeTarget } from '../compat';
+
+export interface TargetPickerOptions {
+  disabledTargets?: ReadonlySet<string>;
+  explicitTarget?: string;
+}
+
+export function shouldPersistDefault(explicitTarget: string | undefined, shouldSave: boolean): boolean {
+  return shouldSave && !explicitTarget;
+}
 
 export class CancelledError extends Error {
   constructor() {
@@ -11,7 +20,15 @@ export class CancelledError extends Error {
   }
 }
 
-export async function pickTarget(pickerOptions: { disabledTargets?: ReadonlySet<string> } = {}): Promise<string> {
+export async function pickTarget(pickerOptions: TargetPickerOptions = {}): Promise<string> {
+  if (pickerOptions.explicitTarget) {
+    const target = normalizeTarget(pickerOptions.explicitTarget);
+    if (!isValidAgent(target)) {
+      throw new Error(`Unsupported target '${pickerOptions.explicitTarget}'.`);
+    }
+    return target;
+  }
+
   const agents = await detectAgents();
   const configuredTarget = await getDefaultTarget();
   const defaultTarget = configuredTarget ? normalizeTarget(configuredTarget) : undefined;
@@ -73,7 +90,7 @@ export async function pickTarget(pickerOptions: { disabledTargets?: ReadonlySet<
     throw new CancelledError();
   }
 
-  if (shouldSave) {
+  if (shouldPersistDefault(pickerOptions.explicitTarget, shouldSave)) {
     await setDefaultTarget(target as string);
   }
 

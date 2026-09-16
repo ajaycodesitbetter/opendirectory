@@ -60,6 +60,11 @@ test('list with piped stdout falls back to plain', async () => {
   expect(output).toContain('Description');
 });
 
+test('interactive browser exposes an explicit target option', () => {
+  const output = execSync('node dist/index.js --help', { stdio: 'pipe' }).toString();
+  expect(output).toContain('--target <tool>');
+});
+
 test('NO_COLOR=1 strips all ANSI from output', async () => {
   const output = execSync('node dist/index.js list --plain', { stdio: 'pipe', env: { ...process.env, NO_COLOR: '1' } }).toString();
   expect(output).not.toMatch(/\x1b\[[0-9;]*m/);
@@ -262,6 +267,28 @@ test('update of unknown skill with missing skills root returns an actionable err
     }
   } finally {
     fs.renameSync(hiddenRoot, skillsRoot);
+  }
+});
+
+test('update of unknown skill with an existing skills root returns an actionable error', async () => {
+  expect.assertions(2);
+  try {
+    execSync('node dist/index.js update unknown-skill --target claude', { stdio: 'pipe' });
+  } catch (error: any) {
+    expect(error.stderr.toString()).toContain("missing SKILL.md in registry");
+    expect(error.status).toBe(1);
+  }
+});
+
+test('underscore-prefixed skills can be installed directly', () => {
+  const skillName = '_underscore-compat-fixture';
+  const sourceDir = path.join(__dirname, '..', 'skills', skillName);
+  try {
+    writeSkillFixture(sourceDir, '');
+    execSync(`node dist/index.js install ${skillName} --target claude`, { stdio: 'pipe' });
+    expect(fs.existsSync(path.join(tmpHome, '.claude/skills', skillName, 'SKILL.md'))).toBe(true);
+  } finally {
+    fs.rmSync(sourceDir, { recursive: true, force: true });
   }
 });
 
