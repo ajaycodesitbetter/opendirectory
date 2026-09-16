@@ -21,7 +21,7 @@ import { runInstalledTUI } from './tui/installed';
 import { getDefaultTarget } from './config';
 import { readManifest, reconcile } from './manifest';
 import { enableTabJumpForGroupMultiselect, enableWindowsSafeClose } from './clack-patch';
-import { formatCompatibility } from './compat';
+import { formatCompatibilityState } from './compat';
 
 enableWindowsSafeClose();
 enableTabJumpForGroupMultiselect();
@@ -79,7 +79,7 @@ async function printPlainTable() {
     for (const skill of skills) {
       let desc = skill.description || '';
       if (desc.length > 100) desc = desc.substring(0, 97) + '...';
-      const compat = formatCompatibility(skill.compatibility, skill.hasCompatibility === true);
+      const compat = formatCompatibilityState(skill.compatibilityState ?? { kind: 'missing' });
       table.push([chalk.white.bold(skill.name), desc, compat]);
     }
 

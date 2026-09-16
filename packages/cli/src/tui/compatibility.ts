@@ -1,4 +1,4 @@
-import { validateCompatibility } from '../compat';
+import { validateCompatibilityState } from '../compat';
 import type { Skill } from '../registry';
 
 export interface SkillAvailability {
@@ -11,10 +11,11 @@ export function getSkillAvailability(skills: Skill[], target: string): SkillAvai
   const unavailable: Skill[] = [];
 
   for (const skill of skills) {
-    const result = validateCompatibility(
+    const result = validateCompatibilityState(
       skill.name,
-      skill.compatibility,
-      skill.hasCompatibility === true,
+      skill.compatibilityState ?? (skill.hasCompatibility
+        ? { kind: 'valid', targets: skill.compatibility as string[] }
+        : { kind: 'missing' }),
       target,
     );
     (result.ok ? available : unavailable).push(skill);

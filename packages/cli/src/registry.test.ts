@@ -1,69 +1,47 @@
 import { describe, expect, test } from 'vitest';
-import { parseSkillFrontmatter, resolveCompatibility } from './registry';
+import { parseSkillFrontmatter } from './registry';
 
-function parse(compatibility: string) {
-  return parseSkillFrontmatter(`---\nname: fixture\ndescription: fixture\ncompatibility: ${compatibility}\n---\n`);
+function parse(frontmatter: string) {
+  return parseSkillFrontmatter(`---\nname: fixture\ndescription: fixture\n${frontmatter}\n---\n`);
 }
 
-describe('parseSkillFrontmatter compatibility representation', () => {
+describe('parseSkillFrontmatter compatibility state', () => {
+  test('normalizes a valid top-level declaration', () => {
+    expect(parse('compatibility: [ OPENCODE, CODEX ]')).toMatchObject({
+      hasCompatibility: true,
+      compatibility: ['codex', 'opencode'],
+      compatibilityState: { kind: 'valid', targets: ['codex', 'opencode'] },
+    });
+  });
+
+  test('treats an omitted top-level declaration as universal', () => {
+    expect(parse('')).toMatchObject({ compatibilityState: { kind: 'missing' } });
+  });
+
   test.each([
-    ['[codex, 1]', ['codex', 1]],
-    ['[codex, null]', ['codex', null]],
-    ['codex', 'codex'],
-    ['[]', []],
-  ])('preserves explicit %s without stringifying it', (source, expected) => {
-    const parsed = parse(source);
-    expect(parsed).toMatchObject({ hasCompatibility: true, compatibility: expected });
+    ['scalar', 'compatibility: codex', 'must be a non-empty YAML list'],
+    ['empty list', 'compatibility: []', 'must not be empty'],
+    ['alias', 'compatibility: [claude-code]', 'unknown target "claude-code"'],
+  ])('preserves explicit invalid %s as a fail-closed state', (_label, source, error) => {
+    expect(parse(source)).toMatchObject({
+      compatibilityState: { kind: 'invalid', error: expect.stringContaining(error) },
+      frontmatterError: expect.stringContaining(error),
+    });
   });
 
-  test('distinguishes an absent compatibility key', () => {
-    const parsed = parseSkillFrontmatter('---\nname: fixture\ndescription: fixture\n---\n');
-    expect(parsed?.hasCompatibility).toBeUndefined();
+  test('preserves YAML syntax errors as a fail-closed state', () => {
+    const parsed = parseSkillFrontmatter('---\nname: fixture\ncompatibility: [codex\n---\n');
+    expect(parsed).toMatchObject({
+      compatibilityState: { kind: 'invalid', error: expect.stringContaining('Invalid YAML frontmatter:') },
+    });
   });
 
-  test('preserves malformed YAML as an actionable frontmatter error', () => {
-    const parsed = parseSkillFrontmatter('---\nname: fixture\ndescription: fixture\ncompatibility: [codex\n---\n');
-    expect(parsed?.frontmatterError).toContain('Invalid YAML frontmatter:');
-    expect(parsed?.hasCompatibility).toBe(true);
-  });
-
-  test('rejects unterminated frontmatter as an actionable error', () => {
-    const parsed = parseSkillFrontmatter('---\nname: fixture\ncompatibility: [codex');
-    expect(parsed?.frontmatterError).toContain('missing closing --- delimiter');
-    expect(parsed?.hasCompatibility).toBe(true);
-  });
-
-  test('source compatibility overrides stale registry compatibility', () => {
-    expect(resolveCompatibility(
-      { compatibility: ['codex'] },
-      parseSkillFrontmatter('---\ncompatibility: [claude]\n---\n'),
-    )).toMatchObject({ hasCompatibility: true, compatibility: ['claude'] });
-  });
-
-  test('local compatibility omission overrides stale registry compatibility as universal', () => {
-    const resolved = resolveCompatibility(
-      { compatibility: ['codex'] },
-      parseSkillFrontmatter('---\nname: fixture\n---\n'),
-    );
-    expect(resolved.compatibility).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(resolved, 'hasCompatibility')).toBe(false);
-  });
-
-  test('invalid source compatibility overrides valid registry compatibility', () => {
-    const resolved = resolveCompatibility(
-      { compatibility: ['codex'] },
-      parseSkillFrontmatter('---\ncompatibility: [claude-code]\n---\n'),
-    );
-    expect(resolved).toMatchObject({ hasCompatibility: true, compatibility: ['claude-code'] });
-  });
-
-  test('source frontmatter errors override registry compatibility', () => {
-    const resolved = resolveCompatibility(
-      { compatibility: ['codex'] },
-      parseSkillFrontmatter('---\ncompatibility: [codex'),
-    );
-    expect(resolved.frontmatterError).toContain('missing closing --- delimiter');
-    expect(resolved.hasCompatibility).toBe(true);
-    expect(resolved.compatibility).toBeUndefined();
+  test('rejects metadata.compatibility instead of promoting it', () => {
+    expect(parse('metadata:\n  compatibility: [codex]')).toMatchObject({
+      compatibilityState: {
+        kind: 'invalid',
+        error: expect.stringContaining('metadata.compatibility is not supported'),
+      },
+    });
   });
 });

@@ -3,8 +3,8 @@ import * as path from 'node:path';
 import { loadRegistry } from './registry';
 import { ValidAgent, isValidAgent, getAgentSkillsDir } from './detect';
 import * as manifest from './manifest';
-import { normalizeTarget, validateCompatibility } from './compat';
-import { findSkillSource } from './skill-discovery';
+import { normalizeTarget, validateCompatibilityState } from './compat';
+import { loadSkillSource } from './skill-discovery';
 
 export interface InstallResult {
   skillName: string;
@@ -24,7 +24,7 @@ export async function installSkill(skillName: string, target: string): Promise<I
     const root = path.resolve(__dirname, '..');
     const repoDir = path.join(root, 'skills', skillName);
     try {
-      const source = await findSkillSource(repoDir);
+      const source = await loadSkillSource(repoDir);
       if (!source) {
         return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(`Skill '${skillName}' missing SKILL.md in registry.`) };
       }
@@ -44,6 +44,15 @@ export async function installSkill(skillName: string, target: string): Promise<I
         };
       }
 
+      const compatibility = validateCompatibilityState(
+        skillName,
+        source.frontmatter.compatibility,
+        normalizedTarget,
+      );
+      if (!compatibility.ok) {
+        return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(compatibility.error) };
+      }
+
       return await installResolvedSkill(skillName, normalizedTarget, skillDir);
     } catch {
       return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(`Repository '${skillName}' not found.`) };
@@ -57,26 +66,6 @@ async function installResolvedSkill(skillName: string, normalizedTarget: string,
   try {
     const registrySkills = await loadRegistry();
     const registryEntry = registrySkills.find(s => s.name === skillName);
-
-    if (registryEntry?.frontmatterError) {
-      return {
-        skillName,
-        target: normalizedTarget,
-        path: '',
-        success: false,
-        error: new Error(`Skill "${skillName}" has invalid YAML frontmatter: ${registryEntry.frontmatterError}`),
-      };
-    }
-
-    const compatResult = validateCompatibility(
-      skillName,
-      registryEntry?.compatibility,
-      registryEntry?.hasCompatibility === true,
-      normalizedTarget,
-    );
-    if (!compatResult.ok) {
-      return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(compatResult.error) };
-    }
 
     const manifestName = registryEntry ? skillName : path.basename(skillDir);
     const destFolderName = path.basename(skillDir);

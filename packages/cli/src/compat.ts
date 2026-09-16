@@ -6,6 +6,11 @@ export interface CompatResult {
   targets?: string[];
 }
 
+export type CompatibilityState =
+  | { kind: 'missing' }
+  | { kind: 'valid'; targets: string[] }
+  | { kind: 'invalid'; error: string };
+
 const CANONICAL_TARGET_SET = new Set<string>(CANONICAL_TARGETS);
 
 export function normalizeTarget(target: string): string {
@@ -52,6 +57,33 @@ export function parseCompatibility(
     ok: true,
     targets: CANONICAL_TARGETS.filter(target => targets.has(target)),
   };
+}
+
+export function compatibilityStateFromDeclaration(
+  compatibility: unknown,
+  hasCompatibility: boolean,
+): CompatibilityState {
+  if (!hasCompatibility) return { kind: 'missing' };
+  const result = parseCompatibility(compatibility, true);
+  return result.ok
+    ? { kind: 'valid', targets: result.targets! }
+    : { kind: 'invalid', error: result.error! };
+}
+
+export function validateCompatibilityState(
+  skillName: string,
+  state: CompatibilityState,
+  target: string,
+): CompatResult {
+  if (state.kind === 'invalid') return invalid(skillName, state.error);
+  if (state.kind === 'missing') return { ok: true };
+  return validateCompatibility(skillName, state.targets, true, target);
+}
+
+export function formatCompatibilityState(state: CompatibilityState): string {
+  if (state.kind === 'missing') return 'all';
+  if (state.kind === 'invalid') return 'invalid declaration';
+  return state.targets.join(', ');
 }
 
 /**

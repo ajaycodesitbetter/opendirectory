@@ -159,6 +159,8 @@ test('update is idempotent (replaces installed skill in place)', async () => {
 
 const COMPAT_FIXTURE_DIR = path.join(__dirname, '..', 'skills', 'test-compat-fixture');
 const REGISTRY_PATH = path.join(__dirname, '..', 'registry.json');
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
+const ROOT_SKILLS_DIR = path.join(PROJECT_ROOT, 'skills');
 
 function createCompatFixture(frontmatter: string, closeFrontmatter = true, nested = false) {
   const sourceDir = nested ? path.join(COMPAT_FIXTURE_DIR, 'nested', 'source') : COMPAT_FIXTURE_DIR;
@@ -172,6 +174,15 @@ function createCompatFixture(frontmatter: string, closeFrontmatter = true, neste
 
 function removeCompatFixture() {
   fs.rmSync(COMPAT_FIXTURE_DIR, { recursive: true, force: true });
+}
+
+function writeSkillFixture(skillDir: string, frontmatter: string, meta?: Record<string, unknown>) {
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    `---\nname: ${path.basename(skillDir)}\ndescription: Compatibility fixture\n${frontmatter}\n---\n`,
+  );
+  if (meta) fs.writeFileSync(path.join(skillDir, 'skill.meta.json'), JSON.stringify(meta));
 }
 
 function addStaleRegistryFixture(): () => void {
@@ -374,7 +385,7 @@ test('malformed compatibility YAML rejects install before destination or manifes
       execSync('node dist/index.js install test-compat-fixture --target codex', { stdio: 'pipe' });
     } catch (error: any) {
       expect(error.status).toBe(1);
-      expect(error.stderr.toString()).toContain('invalid YAML frontmatter');
+      expect(error.stderr.toString()).toContain('Invalid YAML frontmatter');
     }
     expect(fs.existsSync(path.join(tmpHome, '.codex/skills/test-compat-fixture'))).toBe(false);
     expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
@@ -398,7 +409,7 @@ test('malformed compatibility YAML rejects update before backup or mutation', ()
       execSync('node dist/index.js update test-compat-fixture --target codex', { stdio: 'pipe' });
     } catch (error: any) {
       expect(error.status).toBe(1);
-      expect(error.stderr.toString()).toContain('invalid YAML frontmatter');
+      expect(error.stderr.toString()).toContain('Invalid YAML frontmatter');
     }
     expect(fs.existsSync(skillPath)).toBe(true);
     expect(fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf-8')).toBe(skillContentBefore);
@@ -534,5 +545,94 @@ test('nested malformed source rejects update before backup or mutation', () => {
     expect(fs.readdirSync(path.dirname(skillPath)).some(entry => entry.includes('.bak.'))).toBe(false);
   } finally {
     removeCompatFixture();
+  }
+});
+
+test('hidden source compatibility rejects before installation side effects', () => {
+  const skillName = '.hidden-compat-fixture';
+  const sourceDir = path.join(__dirname, '..', 'skills', skillName);
+  try {
+    writeSkillFixture(sourceDir, 'compatibility: [codex]');
+    expect.assertions(4);
+    try {
+      execSync(`node dist/index.js install ${skillName} --target claude`, { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('supports: codex');
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.claude/skills', skillName))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
+  } finally {
+    fs.rmSync(sourceDir, { recursive: true, force: true });
+  }
+});
+
+test('metadata.compatibility is rejected before installation side effects', () => {
+  try {
+    createCompatFixture('metadata:\n  compatibility: [codex]');
+    expect.assertions(4);
+    try {
+      execSync('node dist/index.js install test-compat-fixture --target codex', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('metadata.compatibility is not supported');
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.codex/skills/test-compat-fixture'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
+  } finally {
+    removeCompatFixture();
+  }
+});
+
+test('registry generation and PR validation reject metadata.compatibility', () => {
+  const skillName = 'test-nested-metadata-fixture';
+  const sourceSkillDir = path.join(ROOT_SKILLS_DIR, skillName);
+  try {
+    writeSkillFixture(sourceSkillDir, 'metadata:\n  compatibility: [codex]');
+    expect.assertions(4);
+    try {
+      execSync('pnpm exec tsx scripts/build-registry.ts', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(`${error.stdout}${error.stderr}`).toContain('metadata.compatibility is not supported');
+    }
+    try {
+      execSync('pnpm exec tsx scripts/validate-pr.ts', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(`${error.stdout}${error.stderr}`).toContain('metadata.compatibility is not supported');
+    }
+  } finally {
+    fs.rmSync(sourceSkillDir, { recursive: true, force: true });
+  }
+});
+
+test('SKILL.md compatibility controls generated registry and ignores skill.meta.json compatibility', () => {
+  const skillName = 'test-meta-source-fixture';
+  const runtimeSkillDir = path.join(__dirname, '..', 'skills', skillName);
+  const sourceSkillDir = path.join(ROOT_SKILLS_DIR, skillName);
+  const registryBefore = fs.readFileSync(REGISTRY_PATH, 'utf-8');
+  try {
+    writeSkillFixture(runtimeSkillDir, 'compatibility: [codex]', { compatibility: ['claude'] });
+    writeSkillFixture(sourceSkillDir, 'compatibility: [codex]', { compatibility: ['claude'] });
+    execSync('pnpm exec tsx scripts/build-registry.ts', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+
+    const entry = JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf-8'))
+      .find((skill: { name: string }) => skill.name === skillName);
+    expect(entry.compatibility).toEqual(['codex']);
+
+    expect.assertions(5);
+    try {
+      execSync(`node dist/index.js install ${skillName} --target claude`, { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('supports: codex');
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.claude/skills', skillName))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
+  } finally {
+    fs.writeFileSync(REGISTRY_PATH, registryBefore);
+    fs.rmSync(runtimeSkillDir, { recursive: true, force: true });
+    fs.rmSync(sourceSkillDir, { recursive: true, force: true });
   }
 });

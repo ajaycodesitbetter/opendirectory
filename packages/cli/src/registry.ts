@@ -1,8 +1,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { parseFrontmatter } from './frontmatter';
-import { parseCompatibility } from './compat';
-import { findSkillSource } from './skill-discovery';
+import { inspectSkillFrontmatter } from './frontmatter';
+import { type CompatibilityState } from './compat';
+import { loadSkillSource } from './skill-discovery';
 
 export interface Skill {
   name: string;
@@ -16,67 +16,44 @@ export interface Skill {
   hasCompatibility?: boolean;
   /** Preserves frontmatter parse failures so malformed skills cannot become universal. */
   frontmatterError?: string;
+  compatibilityState?: CompatibilityState;
 }
 
 const getProjectRoot = () => path.resolve(__dirname, '..');
 
 async function parseSkillMd(skillDir: string): Promise<Partial<Skill> | null> {
   try {
-    const source = await findSkillSource(skillDir);
+    const source = await loadSkillSource(skillDir);
     if (!source) return null;
-    const content = await fs.readFile(source.skillMdPath, 'utf-8');
-    return parseSkillFrontmatter(content) ?? {};
+    return parseSkillFrontmatterDocument(source.frontmatter, true);
   } catch {
     return null;
   }
 }
 
 export function parseSkillFrontmatter(content: string): Partial<Skill> | null {
-  let source: Record<string, unknown>;
-  try {
-    source = parseFrontmatter(content).data;
-  } catch (error) {
-    return {
-      frontmatterError: error instanceof Error ? error.message : String(error),
-      hasCompatibility: true,
-    };
-  }
-  if (Object.keys(source).length === 0 && !content.startsWith('---')) return null;
-  const result: Partial<Skill> = {};
+  return parseSkillFrontmatterDocument(inspectSkillFrontmatter(content), content.startsWith('---'));
+}
+
+function parseSkillFrontmatterDocument(
+  frontmatter: ReturnType<typeof inspectSkillFrontmatter>,
+  hasSourceFile: boolean,
+): Partial<Skill> | null {
+  const source = frontmatter.data;
+  if (Object.keys(source).length === 0 && !hasSourceFile && frontmatter.compatibility.kind === 'missing') return null;
+  const result: Partial<Skill> = { compatibilityState: frontmatter.compatibility };
   if (typeof source.description === 'string') result.description = source.description;
   if (typeof source.author === 'string') result.author = source.author;
   if (typeof source.version === 'string') result.version = source.version;
   if (Array.isArray(source.tags)) result.tags = source.tags.filter((tag): tag is string => typeof tag === 'string');
-  if (Object.prototype.hasOwnProperty.call(source, 'compatibility')) {
+  if (frontmatter.compatibility.kind === 'valid') {
     result.hasCompatibility = true;
-    result.compatibility = source.compatibility;
+    result.compatibility = frontmatter.compatibility.targets;
+  }
+  if (frontmatter.compatibility.kind === 'invalid') {
+    result.frontmatterError = frontmatter.compatibility.error;
   }
   return result;
-}
-
-export function resolveCompatibility(
-  fromRegistry: Record<string, unknown> | undefined,
-  fromFrontmatter: Partial<Skill> | null,
-): Pick<Skill, 'compatibility' | 'hasCompatibility' | 'frontmatterError'> {
-  const localHasCompatibility = fromFrontmatter?.hasCompatibility === true;
-  const frontmatterError = fromFrontmatter?.frontmatterError;
-  const hasLocalSource = fromFrontmatter !== null;
-  const registryHasCompatibility = hasOwn(fromRegistry, 'compatibility');
-  const hasCompatibility = hasLocalSource
-    ? localHasCompatibility || Boolean(frontmatterError)
-    : registryHasCompatibility;
-  const rawCompatibility = hasLocalSource
-    ? fromFrontmatter?.compatibility
-    : fromRegistry?.compatibility;
-  const compatibilityResult = parseCompatibility(rawCompatibility, hasCompatibility);
-
-  return {
-    compatibility: compatibilityResult.ok && hasCompatibility
-      ? compatibilityResult.targets
-      : rawCompatibility,
-    ...(hasCompatibility && { hasCompatibility }),
-    ...(frontmatterError && { frontmatterError }),
-  };
 }
 
 export async function loadRegistry(): Promise<Skill[]> {
@@ -108,7 +85,7 @@ export async function loadRegistry(): Promise<Skill[]> {
     seen.add(name);
     const fromRegistry = registryMap.get(name);
     const fromFrontmatter = await parseSkillMd(dir);
-    const resolvedCompatibility = resolveCompatibility(fromRegistry, fromFrontmatter);
+    const compatibilityState = fromFrontmatter?.compatibilityState ?? { kind: 'missing' };
     skills.push({
       name,
       description: cleanDescription(fromRegistry?.description || fromFrontmatter?.description || `Skill: ${name}`),
@@ -116,16 +93,17 @@ export async function loadRegistry(): Promise<Skill[]> {
       author: fromRegistry?.author || fromFrontmatter?.author || 'OpenDirectory',
       version: fromRegistry?.version || fromFrontmatter?.version || 'unknown',
       path: fromRegistry?.path || `skills/${name}`,
-      ...resolvedCompatibility,
+      compatibilityState,
+      ...(compatibilityState.kind === 'valid' && {
+        compatibility: compatibilityState.targets,
+        hasCompatibility: true,
+      }),
+      ...(compatibilityState.kind === 'invalid' && { frontmatterError: compatibilityState.error }),
     });
   }
 
   skills.sort((a, b) => a.name.localeCompare(b.name));
   return skills;
-}
-
-function hasOwn(value: unknown, key: string): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function cleanDescription(desc: string): string {
