@@ -13,6 +13,8 @@ export interface Skill {
   compatibility?: unknown;
   /** Distinguishes an omitted key from an explicit null, scalar, or empty list. */
   hasCompatibility?: boolean;
+  /** Preserves frontmatter parse failures so malformed skills cannot become universal. */
+  frontmatterError?: string;
 }
 
 const getProjectRoot = () => path.resolve(__dirname, '..');
@@ -31,8 +33,11 @@ export function parseSkillFrontmatter(content: string): Partial<Skill> | null {
   let source: Record<string, unknown>;
   try {
     source = parseFrontmatter(content).data;
-  } catch {
-    return null;
+  } catch (error) {
+    return {
+      frontmatterError: error instanceof Error ? error.message : String(error),
+      hasCompatibility: true,
+    };
   }
   if (Object.keys(source).length === 0 && !content.startsWith('---')) return null;
   const result: Partial<Skill> = {};
@@ -92,6 +97,7 @@ export async function loadRegistry(): Promise<Skill[]> {
       author: fromRegistry?.author || fromFrontmatter?.author || 'OpenDirectory',
       version: fromRegistry?.version || fromFrontmatter?.version || 'unknown',
       path: fromRegistry?.path || `skills/${name}`,
+      ...(fromFrontmatter?.frontmatterError && { frontmatterError: fromFrontmatter.frontmatterError }),
       ...(hasCompatibility && { compatibility, hasCompatibility }),
     });
   }

@@ -22,6 +22,16 @@ export async function updateSkill(name: string, target: string): Promise<Install
       return { skillName: name, target: normalizedTarget, path: '', success: false, error: new Error(`Skill '${name}' is not in the registry — cannot update.`) };
     }
 
+    if (registrySkill.frontmatterError) {
+      return {
+        skillName: name,
+        target: normalizedTarget,
+        path: '',
+        success: false,
+        error: new Error(`Skill "${name}" has invalid YAML frontmatter: ${registrySkill.frontmatterError}`),
+      };
+    }
+
     const m = await manifest.readManifest();
     const installedSkill = m.skills.find(s => s.name === name && s.target === normalizedTarget);
     if (!installedSkill) {

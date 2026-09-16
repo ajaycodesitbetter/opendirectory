@@ -20,4 +20,10 @@ describe('parseSkillFrontmatter compatibility representation', () => {
     const parsed = parseSkillFrontmatter('---\nname: fixture\ndescription: fixture\n---\n');
     expect(parsed?.hasCompatibility).toBeUndefined();
   });
+
+  test('preserves malformed YAML as an actionable frontmatter error', () => {
+    const parsed = parseSkillFrontmatter('---\nname: fixture\ndescription: fixture\ncompatibility: [codex\n---\n');
+    expect(parsed?.frontmatterError).toContain('Invalid YAML frontmatter:');
+    expect(parsed?.hasCompatibility).toBe(true);
+  });
 });

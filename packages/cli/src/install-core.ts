@@ -90,6 +90,16 @@ export async function installSkill(skillName: string, target: string): Promise<I
     const registrySkills = await loadRegistry();
     const registryEntry = registrySkills.find(s => s.name === skillName);
 
+    if (registryEntry?.frontmatterError) {
+      return {
+        skillName,
+        target: normalizedTarget,
+        path: '',
+        success: false,
+        error: new Error(`Skill "${skillName}" has invalid YAML frontmatter: ${registryEntry.frontmatterError}`),
+      };
+    }
+
     // --- Compatibility guard (must run BEFORE any fs mutation) ---
     const compatResult = validateCompatibility(
       skillName,
