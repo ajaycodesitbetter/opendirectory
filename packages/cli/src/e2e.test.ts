@@ -158,18 +158,36 @@ test('update is idempotent (replaces installed skill in place)', async () => {
 // --- Compatibility enforcement e2e tests ---
 
 const COMPAT_FIXTURE_DIR = path.join(__dirname, '..', 'skills', 'test-compat-fixture');
+const REGISTRY_PATH = path.join(__dirname, '..', 'registry.json');
 
-function createCompatFixture(frontmatter: string, closeFrontmatter = true) {
-  fs.mkdirSync(COMPAT_FIXTURE_DIR, { recursive: true });
+function createCompatFixture(frontmatter: string, closeFrontmatter = true, nested = false) {
+  const sourceDir = nested ? path.join(COMPAT_FIXTURE_DIR, 'nested', 'source') : COMPAT_FIXTURE_DIR;
+  fs.mkdirSync(sourceDir, { recursive: true });
   const closing = closeFrontmatter ? '\n---\n\n# Test Skill\nThis is a test fixture.\n' : '\n';
   fs.writeFileSync(
-    path.join(COMPAT_FIXTURE_DIR, 'SKILL.md'),
+    path.join(sourceDir, 'SKILL.md'),
     `---\nname: test-compat-fixture\ndescription: Test fixture for compatibility\n${frontmatter}${closing}`,
   );
 }
 
 function removeCompatFixture() {
   fs.rmSync(COMPAT_FIXTURE_DIR, { recursive: true, force: true });
+}
+
+function addStaleRegistryFixture(): () => void {
+  const original = fs.readFileSync(REGISTRY_PATH, 'utf-8');
+  const registry = JSON.parse(original);
+  registry.push({
+    name: 'test-compat-fixture',
+    description: 'Stale test registry entry',
+    tags: [],
+    author: 'test',
+    version: '1.0.0',
+    path: 'skills/test-compat-fixture',
+    compatibility: ['codex'],
+  });
+  fs.writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  return () => fs.writeFileSync(REGISTRY_PATH, original);
 }
 
 test('compatibility: [codex] + --target codex → succeeds', () => {
@@ -441,5 +459,80 @@ test.each(['constructor', 'toString'])('unsupported inherited target %s returns 
   } catch (error: any) {
     expect(error.status).toBe(1);
     expect(error.stderr.toString()).toContain(`Unsupported target '${target}'.`);
+  }
+});
+
+test('local omission is universal despite stale registry compatibility', () => {
+  const restoreRegistry = addStaleRegistryFixture();
+  try {
+    createCompatFixture('');
+    execSync('node dist/index.js install test-compat-fixture --target claude', { stdio: 'pipe' });
+    expect(fs.existsSync(path.join(tmpHome, '.claude/skills/test-compat-fixture/SKILL.md'))).toBe(true);
+  } finally {
+    restoreRegistry();
+    removeCompatFixture();
+  }
+});
+
+test('local compatibility controls over stale registry compatibility', () => {
+  const restoreRegistry = addStaleRegistryFixture();
+  try {
+    createCompatFixture('compatibility: [claude]');
+    expect.assertions(4);
+    try {
+      execSync('node dist/index.js install test-compat-fixture --target codex', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('supports: claude');
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.codex/skills/test-compat-fixture'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
+  } finally {
+    restoreRegistry();
+    removeCompatFixture();
+  }
+});
+
+test('nested local compatibility rejects an incompatible target before side effects', () => {
+  try {
+    createCompatFixture('compatibility: [codex]', true, true);
+    expect.assertions(4);
+    try {
+      execSync('node dist/index.js install test-compat-fixture --target claude', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('supports: codex');
+    }
+    expect(fs.existsSync(path.join(tmpHome, '.claude/skills/source'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpHome, '.opendirectory/installed.json'))).toBe(false);
+  } finally {
+    removeCompatFixture();
+  }
+});
+
+test('nested malformed source rejects update before backup or mutation', () => {
+  try {
+    createCompatFixture('', true, true);
+    execSync('node dist/index.js install test-compat-fixture --target codex', { stdio: 'pipe' });
+    const skillPath = path.join(tmpHome, '.codex/skills/source');
+    const manifestPath = path.join(tmpHome, '.opendirectory/installed.json');
+    const skillContentBefore = fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf-8');
+    const manifestBefore = fs.readFileSync(manifestPath, 'utf-8');
+
+    removeCompatFixture();
+    createCompatFixture('compatibility: [codex', false, true);
+    expect.assertions(6);
+    try {
+      execSync('node dist/index.js update test-compat-fixture --target codex', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.status).toBe(1);
+      expect(error.stderr.toString()).toContain('missing closing --- delimiter');
+    }
+    expect(fs.existsSync(skillPath)).toBe(true);
+    expect(fs.readFileSync(path.join(skillPath, 'SKILL.md'), 'utf-8')).toBe(skillContentBefore);
+    expect(fs.readFileSync(manifestPath, 'utf-8')).toBe(manifestBefore);
+    expect(fs.readdirSync(path.dirname(skillPath)).some(entry => entry.includes('.bak.'))).toBe(false);
+  } finally {
+    removeCompatFixture();
   }
 });

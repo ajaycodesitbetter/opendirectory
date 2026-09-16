@@ -40,6 +40,15 @@ describe('parseSkillFrontmatter compatibility representation', () => {
     )).toMatchObject({ hasCompatibility: true, compatibility: ['claude'] });
   });
 
+  test('local compatibility omission overrides stale registry compatibility as universal', () => {
+    const resolved = resolveCompatibility(
+      { compatibility: ['codex'] },
+      parseSkillFrontmatter('---\nname: fixture\n---\n'),
+    );
+    expect(resolved.compatibility).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(resolved, 'hasCompatibility')).toBe(false);
+  });
+
   test('invalid source compatibility overrides valid registry compatibility', () => {
     const resolved = resolveCompatibility(
       { compatibility: ['codex'] },

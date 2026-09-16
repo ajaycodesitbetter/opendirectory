@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { parseFrontmatter } from './frontmatter';
 import { parseCompatibility } from './compat';
+import { findSkillSource } from './skill-discovery';
 
 export interface Skill {
   name: string;
@@ -20,10 +21,11 @@ export interface Skill {
 const getProjectRoot = () => path.resolve(__dirname, '..');
 
 async function parseSkillMd(skillDir: string): Promise<Partial<Skill> | null> {
-  const skillMdPath = path.join(skillDir, 'SKILL.md');
   try {
-    const content = await fs.readFile(skillMdPath, 'utf-8');
-    return parseSkillFrontmatter(content);
+    const source = await findSkillSource(skillDir);
+    if (!source) return null;
+    const content = await fs.readFile(source.skillMdPath, 'utf-8');
+    return parseSkillFrontmatter(content) ?? {};
   } catch {
     return null;
   }
@@ -58,10 +60,12 @@ export function resolveCompatibility(
 ): Pick<Skill, 'compatibility' | 'hasCompatibility' | 'frontmatterError'> {
   const localHasCompatibility = fromFrontmatter?.hasCompatibility === true;
   const frontmatterError = fromFrontmatter?.frontmatterError;
+  const hasLocalSource = fromFrontmatter !== null;
   const registryHasCompatibility = hasOwn(fromRegistry, 'compatibility');
-  const useLocalDeclaration = localHasCompatibility || Boolean(frontmatterError);
-  const hasCompatibility = useLocalDeclaration || registryHasCompatibility;
-  const rawCompatibility = useLocalDeclaration
+  const hasCompatibility = hasLocalSource
+    ? localHasCompatibility || Boolean(frontmatterError)
+    : registryHasCompatibility;
+  const rawCompatibility = hasLocalSource
     ? fromFrontmatter?.compatibility
     : fromRegistry?.compatibility;
   const compatibilityResult = parseCompatibility(rawCompatibility, hasCompatibility);
