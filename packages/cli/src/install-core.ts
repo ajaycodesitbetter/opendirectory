@@ -24,6 +24,12 @@ export async function installSkill(skillName: string, target: string): Promise<I
     const root = path.resolve(__dirname, '..');
     const repoDir = path.join(root, 'skills', skillName);
     try {
+      await fs.access(repoDir);
+    } catch {
+      return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(`Repository '${skillName}' not found.`) };
+    }
+
+    try {
       const source = await loadSkillSource(repoDir);
       if (!source) {
         return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(`Skill '${skillName}' missing SKILL.md in registry.`) };
@@ -54,8 +60,8 @@ export async function installSkill(skillName: string, target: string): Promise<I
       }
 
       return await installResolvedSkill(skillName, normalizedTarget, skillDir);
-    } catch {
-      return { skillName, target: normalizedTarget, path: '', success: false, error: new Error(`Repository '${skillName}' not found.`) };
+    } catch (error: any) {
+      return { skillName, target: normalizedTarget, path: '', success: false, error };
     }
   } catch (error: any) {
     return { skillName, target, path: '', success: false, error };

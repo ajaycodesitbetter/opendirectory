@@ -17,6 +17,10 @@ const BACK = Symbol('back');
 
 const BRAND_PURPLE = '#856FE6';
 
+export function targetForSelection(requestedTarget: string | undefined, pickedTarget: string): string {
+  return requestedTarget ?? pickedTarget;
+}
+
 function truncate(text: string, len: number): string {
   return text.length > len ? text.slice(0, len - 3) + '...' : text;
 }
@@ -171,14 +175,13 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
         continue selectionLoop;
       }
 
-      target = requestedTarget ?? await pickTarget({ disabledTargets });
+      target = targetForSelection(requestedTarget, await pickTarget({ disabledTargets }));
       const preflight = getSkillAvailability(selectedSkills, target);
       if (preflight.unavailable.length > 0) {
         p.note(
           `${preflight.unavailable.map(skill => skill.name).join(', ')} cannot be installed for ${target}. Choose a different set of skills.`,
           'Compatibility',
         );
-        requestedTarget = undefined;
         continue selectionLoop;
       }
       break;

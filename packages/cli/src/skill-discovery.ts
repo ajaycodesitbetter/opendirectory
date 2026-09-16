@@ -12,53 +12,61 @@ export interface LoadedSkillSource extends SkillSource {
   frontmatter: SkillFrontmatterDocument;
 }
 
-/** Finds the same SKILL.md location used by both registry loading and installation. */
-export async function findSkillSource(repoDir: string): Promise<SkillSource | null> {
-  const direct = await sourceAt(repoDir);
-  if (direct) return direct;
+/** Maximum directory depth below a skill root at which SKILL.md may be found. */
+export const MAX_SKILL_SOURCE_DEPTH = 4;
 
-  const entries = await fs.readdir(repoDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const source = await sourceAt(path.join(repoDir, entry.name));
+const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules']);
+
+/** Finds the same deterministic SKILL.md location used by runtime and tooling. */
+export async function findSkillSource(repoDir: string): Promise<SkillSource | null> {
+  return findSkillSourceAsync(repoDir, 0);
+}
+
+async function findSkillSourceAsync(dir: string, depth: number): Promise<SkillSource | null> {
+  const direct = await sourceAt(dir);
+  if (direct) return direct;
+  if (depth >= MAX_SKILL_SOURCE_DEPTH) return null;
+
+  let entries: fsSync.Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const directories = entries
+    .filter(entry => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of directories) {
+    const source = await findSkillSourceAsync(path.join(dir, entry.name), depth + 1);
     if (source) return source;
   }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name === '.git') continue;
-    const subDir = path.join(repoDir, entry.name);
-    const subEntries = await fs.readdir(subDir, { withFileTypes: true });
-    for (const subEntry of subEntries) {
-      if (!subEntry.isDirectory()) continue;
-      const source = await sourceAt(path.join(subDir, subEntry.name));
-      if (source) return source;
-    }
-  }
-
   return null;
 }
 
 export function findSkillSourceSync(repoDir: string): SkillSource | null {
-  const direct = sourceAtSync(repoDir);
-  if (direct) return direct;
+  return findSkillSourceSyncAt(repoDir, 0);
+}
 
-  const entries = fsSync.readdirSync(repoDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const source = sourceAtSync(path.join(repoDir, entry.name));
+function findSkillSourceSyncAt(dir: string, depth: number): SkillSource | null {
+  const direct = sourceAtSync(dir);
+  if (direct) return direct;
+  if (depth >= MAX_SKILL_SOURCE_DEPTH) return null;
+
+  let entries: fsSync.Dirent[];
+  try {
+    entries = fsSync.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const directories = entries
+    .filter(entry => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of directories) {
+    const source = findSkillSourceSyncAt(path.join(dir, entry.name), depth + 1);
     if (source) return source;
   }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name === '.git') continue;
-    const subEntries = fsSync.readdirSync(path.join(repoDir, entry.name), { withFileTypes: true });
-    for (const subEntry of subEntries) {
-      if (!subEntry.isDirectory()) continue;
-      const source = sourceAtSync(path.join(repoDir, entry.name, subEntry.name));
-      if (source) return source;
-    }
-  }
-
   return null;
 }
 
@@ -72,8 +80,8 @@ export async function loadSkillSource(repoDir: string): Promise<LoadedSkillSourc
 async function sourceAt(skillDir: string): Promise<SkillSource | null> {
   const skillMdPath = path.join(skillDir, 'SKILL.md');
   try {
-    await fs.access(skillMdPath);
-    return { skillDir, skillMdPath };
+    const stat = await fs.stat(skillMdPath);
+    return stat.isFile() ? { skillDir, skillMdPath } : null;
   } catch {
     return null;
   }
@@ -82,8 +90,7 @@ async function sourceAt(skillDir: string): Promise<SkillSource | null> {
 function sourceAtSync(skillDir: string): SkillSource | null {
   const skillMdPath = path.join(skillDir, 'SKILL.md');
   try {
-    fsSync.accessSync(skillMdPath);
-    return { skillDir, skillMdPath };
+    return fsSync.statSync(skillMdPath).isFile() ? { skillDir, skillMdPath } : null;
   } catch {
     return null;
   }

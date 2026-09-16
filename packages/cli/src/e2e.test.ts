@@ -248,6 +248,23 @@ test('compatibility: [CODEX, " opencode "] normalizes and succeeds', () => {
   }
 });
 
+test('update of unknown skill with missing skills root returns an actionable error', async () => {
+  const skillsRoot = path.join(CLI_ROOT, 'skills');
+  const hiddenRoot = path.join(CLI_ROOT, `skills-missing-${randomUUID()}`);
+  fs.renameSync(skillsRoot, hiddenRoot);
+  try {
+    expect.assertions(2);
+    try {
+      execSync('node dist/index.js update unknown-skill --target claude', { stdio: 'pipe' });
+    } catch (error: any) {
+      expect(error.stderr.toString()).toContain("missing SKILL.md in registry");
+      expect(error.status).toBe(1);
+    }
+  } finally {
+    fs.renameSync(hiddenRoot, skillsRoot);
+  }
+});
+
 test('--target " CODEX " is normalized before validation and installation', () => {
   try {
     createCompatFixture('compatibility: [codex]');
