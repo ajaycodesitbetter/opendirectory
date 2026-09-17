@@ -43,6 +43,15 @@ describe('skill source discovery', () => {
     expect(findSkillSourceSync(root)?.skillMdPath).toBe(expected);
   });
 
+  test('prefers a shallow source over a deeper lexical branch for async and sync discovery', async () => {
+    const root = makeRoot();
+    const expected = writeSkill(root, ['src']);
+    writeSkill(root, ['docs', 'examples']);
+
+    expect(findSkillSourceSync(root)?.skillMdPath).toBe(expected);
+    expect((await findSkillSource(root))?.skillMdPath).toBe(expected);
+  });
+
   test('never selects sources below .git or node_modules', () => {
     const root = makeRoot();
     writeSkill(root, ['.git', 'hidden']);

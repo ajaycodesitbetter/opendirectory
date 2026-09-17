@@ -21,53 +21,30 @@ const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules']);
 
 /** Finds the same deterministic SKILL.md location used by runtime and tooling. */
 export async function findSkillSource(repoDir: string): Promise<SkillSource | null> {
-  return findSkillSourceAsync(repoDir, 0);
-}
+  let level = [repoDir];
+  for (let depth = 0; depth <= MAX_SKILL_SOURCE_DEPTH; depth++) {
+    for (const dir of level) {
+      const direct = await sourceAt(dir);
+      if (direct) return direct;
+    }
+    if (depth >= MAX_SKILL_SOURCE_DEPTH) break;
 
-async function findSkillSourceAsync(dir: string, depth: number): Promise<SkillSource | null> {
-  const direct = await sourceAt(dir);
-  if (direct) return direct;
-  if (depth >= MAX_SKILL_SOURCE_DEPTH) return null;
-
-  let entries: fsSync.Dirent[];
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  const directories = entries
-    .filter(entry => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of directories) {
-    const source = await findSkillSourceAsync(path.join(dir, entry.name), depth + 1);
-    if (source) return source;
+    const nextLevel = (await Promise.all(level.map(readChildDirectories))).flat();
+    level = nextLevel.sort((a, b) => a.localeCompare(b));
   }
   return null;
 }
 
 export function findSkillSourceSync(repoDir: string): SkillSource | null {
-  return findSkillSourceSyncAt(repoDir, 0);
-}
+  let level = [repoDir];
+  for (let depth = 0; depth <= MAX_SKILL_SOURCE_DEPTH; depth++) {
+    for (const dir of level) {
+      const direct = sourceAtSync(dir);
+      if (direct) return direct;
+    }
+    if (depth >= MAX_SKILL_SOURCE_DEPTH) break;
 
-function findSkillSourceSyncAt(dir: string, depth: number): SkillSource | null {
-  const direct = sourceAtSync(dir);
-  if (direct) return direct;
-  if (depth >= MAX_SKILL_SOURCE_DEPTH) return null;
-
-  let entries: fsSync.Dirent[];
-  try {
-    entries = fsSync.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  const directories = entries
-    .filter(entry => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  for (const entry of directories) {
-    const source = findSkillSourceSyncAt(path.join(dir, entry.name), depth + 1);
-    if (source) return source;
+    level = level.flatMap(readChildDirectoriesSync).sort((a, b) => a.localeCompare(b));
   }
   return null;
 }
@@ -109,6 +86,28 @@ function sourceReadError(source: SkillSource, error: unknown): LoadedSkillSource
       },
     },
   };
+}
+
+async function readChildDirectories(dir: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
+      .map(entry => path.join(dir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function readChildDirectoriesSync(dir: string): string[] {
+  try {
+    const entries = fsSync.readdirSync(dir, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name))
+      .map(entry => path.join(dir, entry.name));
+  } catch {
+    return [];
+  }
 }
 
 function sourceAtSync(skillDir: string): SkillSource | null {

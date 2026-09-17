@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
 import { inspectSkillFrontmatter } from '../packages/cli/src/frontmatter';
 import { findSkillSourceSync } from '../packages/cli/src/skill-discovery';
@@ -45,20 +46,21 @@ function flattenFrontmatterMetadata(data: Record<string, unknown>): Record<strin
   return { ...nestedMetadata, ...topLevel };
 }
 
-function buildRegistry() {
-  if (!fs.existsSync(SKILLS_DIR)) {
-    console.error(`Skills directory not found at ${SKILLS_DIR}`);
+export function buildRegistry(skillsDir = SKILLS_DIR, outputFile = OUTPUT_FILE): Skill[] {
+  if (!fs.existsSync(skillsDir)) {
+    console.error(`Skills directory not found at ${skillsDir}`);
     process.exit(1);
   }
 
-  const skillFolders = fs.readdirSync(SKILLS_DIR).filter(file => {
-    return fs.statSync(path.join(SKILLS_DIR, file)).isDirectory();
+  const skillFolders = fs.readdirSync(skillsDir).filter(file => {
+    return fs.statSync(path.join(skillsDir, file)).isDirectory();
   }).sort(); // deterministic order across all OS/filesystems
 
   const registry: Skill[] = [];
 
   for (const folder of skillFolders) {
-    const folderPath = path.join(SKILLS_DIR, folder);
+    const folderPath = path.join(skillsDir, folder);
+    const jsonMetadata: Record<string, unknown> = {};
     let metadata: any = {
       name: folder,
       path: `skills/${folder}`,
@@ -69,6 +71,7 @@ function buildRegistry() {
       try {
         const content = JSON.parse(fs.readFileSync(metaJsonPath, 'utf-8'));
         const { compatibility: _ignoredCompatibility, ...ordinaryMetadata } = content;
+        Object.assign(jsonMetadata, ordinaryMetadata);
         metadata = { ...metadata, ...ordinaryMetadata };
       } catch (e) {
         console.warn(`Warning: Failed to parse skill.meta.json in ${folder}`);
@@ -81,7 +84,7 @@ function buildRegistry() {
       if (sourceMetadata.compatibility.kind === 'invalid') {
         throw new Error(`Skill '${folder}' has an invalid compatibility declaration: ${sourceMetadata.compatibility.error}`);
       }
-      metadata = { ...metadata, ...sourceMetadata.metadata };
+      metadata = { ...metadata, ...sourceMetadata.metadata, ...jsonMetadata };
       if (sourceMetadata.compatibility.kind === 'valid') {
         metadata.compatibility = sourceMetadata.compatibility.targets;
       } else {
@@ -150,13 +153,17 @@ function buildRegistry() {
     }
   }
 
-  const outputDir = path.dirname(OUTPUT_FILE);
+  const outputDir = path.dirname(outputFile);
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(registry, null, 2));
-  console.log(`Successfully built registry with ${registry.length} skills at ${OUTPUT_FILE}`);
+  fs.writeFileSync(outputFile, JSON.stringify(registry, null, 2));
+  console.log(`Successfully built registry with ${registry.length} skills at ${outputFile}`);
+  return registry;
 }
 
-buildRegistry();
+const executedFile = process.argv[1] ? path.resolve(process.argv[1]) : '';
+if (executedFile === path.resolve(fileURLToPath(import.meta.url))) {
+  buildRegistry();
+}

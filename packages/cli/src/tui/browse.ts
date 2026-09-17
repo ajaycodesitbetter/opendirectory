@@ -4,14 +4,18 @@ import { setTimeout } from 'timers/promises';
 import { printAnimatedBanner } from '../banner';
 import { loadRegistry, type Skill } from '../registry';
 import { pickTarget, CancelledError } from './target-picker';
-import { installSkill } from '../install-core';
 import { terminalWidth, isInteractive, noColor } from '../tty';
 import { categoryFor, CATEGORY_ORDER } from '../categories';
 import { printRandomTip } from '../tips';
 import { BRAILLE_SPINNER_FRAMES, renderProgressBar } from '../animations';
-import { normalizeTarget } from '../compat';
+import { formatCompatibilityState, normalizeTarget } from '../compat';
 import { getSkillAvailability } from './compatibility';
 import { AGENT_PATHS, isValidAgent } from '../detect';
+import {
+  installPreparedSkill,
+  prepareInstallSkill,
+  type PreparedInstall,
+} from '../install-core';
 
 const BACK = Symbol('back');
 
@@ -59,30 +63,54 @@ function buildSpinnerOptions(): p.SpinnerOptions | undefined {
   };
 }
 
-async function searchAllSkills(skills: Skill[]): Promise<string[] | symbol> {
+function skillOption(
+  skill: Skill,
+  target: string | undefined,
+  descriptionLength: number,
+): { value: string; label: string; hint: string; disabled?: boolean } {
+  const description = truncate(skill.description, descriptionLength);
+  if (!target) {
+    return { value: skill.name, label: skill.name, hint: description };
+  }
+
+  const compatibilityState = skill.compatibilityState ?? {
+    kind: 'invalid' as const,
+    error: 'Compatibility state is unavailable.',
+  };
+  const unavailable = getSkillAvailability([skill], target).unavailable.length > 0;
+  return {
+    value: skill.name,
+    label: skill.name,
+    hint: truncate(`supports: ${formatCompatibilityState(compatibilityState)} · ${description}`, descriptionLength),
+    disabled: unavailable,
+  };
+}
+
+export async function searchAllSkills(
+  skills: Skill[],
+  target?: string,
+  initialValues: string[] = [],
+): Promise<string[] | symbol> {
   return p.autocompleteMultiselect({
     message: 'Type to filter  ↓ to navigate  Space/Tab to select  Enter to confirm',
-    options: skills.map(skill => ({
-      value: skill.name,
-      label: skill.name,
-      hint: truncate(skill.description, 80)
-    })),
+    options: skills.map(skill => skillOption(skill, target, 100)),
+    initialValues,
     maxItems: 18,
     required: false
   });
 }
 
-async function browseByCategory(skills: Skill[]): Promise<string[] | symbol> {
+export async function browseByCategory(
+  skills: Skill[],
+  target?: string,
+  initialValues: string[] = [],
+): Promise<string[] | symbol> {
   const grouped = groupSkillsByCategory(skills);
-  const options: Record<string, Array<{ value: string; label: string; hint?: string }>> = {};
+  const options: Record<string, Array<{ value: string; label: string; hint?: string; disabled?: boolean }>> = {};
   for (const [cat, list] of Object.entries(grouped)) {
     const count = list.length;
     const groupLabel = `${cat} ${chalk.dim(`(${count})`)}`;
-    options[groupLabel] = list.map(skill => ({
-      value: skill.name,
-      label: skill.name,
-      hint: truncate(skill.description, 70)
-    }));
+    options[groupLabel] = list.map(skill => skillOption(skill, target, 100));
   }
 
   p.note(
@@ -94,6 +122,7 @@ async function browseByCategory(skills: Skill[]): Promise<string[] | symbol> {
   const selected = await p.groupMultiselect({
     message: 'Tab switches category  Space toggles  Enter confirms  ESC goes back',
     options,
+    initialValues,
     maxItems: 18,
     required: false,
     selectableGroups: true
@@ -101,6 +130,51 @@ async function browseByCategory(skills: Skill[]): Promise<string[] | symbol> {
 
   if (p.isCancel(selected)) return BACK;
   return selected as string[];
+}
+
+export interface BatchInstallPreparation {
+  success: boolean;
+  prepared: PreparedInstall[];
+  failure?: { name: string; error: Error };
+}
+
+export async function prepareBatchInstall(
+  skillNames: string[],
+  target: string,
+): Promise<BatchInstallPreparation> {
+  const results = await Promise.all(skillNames.map(name => prepareInstallSkill(name, target)));
+  const failureIndex = results.findIndex(result => !result.success || !result.preparation);
+  if (failureIndex >= 0) {
+    const result = results[failureIndex];
+    return {
+      success: false,
+      prepared: [],
+      failure: {
+        name: skillNames[failureIndex],
+        error: result.error ?? new Error('Install preparation failed.'),
+      },
+    };
+  }
+
+  return {
+    success: true,
+    prepared: results.map(result => result.preparation!),
+  };
+}
+
+function compatibilityLabel(skill: Skill): string {
+  return formatCompatibilityState(skill.compatibilityState ?? {
+    kind: 'invalid',
+    error: 'Compatibility state is unavailable.',
+  });
+}
+
+function formatSelectionConflict(skills: Skill[]): string {
+  const declaredSkills = skills.filter(skill => skill.compatibilityState?.kind !== 'missing');
+  const conflicts = declaredSkills.length > 0 ? declaredSkills : skills;
+  return conflicts
+    .map(skill => `${skill.name} (supports: ${compatibilityLabel(skill)})`)
+    .join('; ');
 }
 
 export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean } = {}): Promise<void> {
@@ -152,14 +226,14 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
 
       if (mode === 'category') {
         while (true) {
-          const result = await browseByCategory(skills);
+          const result = await browseByCategory(skills, requestedTarget, skillNames ?? []);
           if (result === BACK) continue modeLoop;
           if ((result as string[]).length === 0) continue;
           skillNames = result as string[];
           break;
         }
       } else {
-        const result = await searchAllSkills(skills);
+        const result = await searchAllSkills(skills, requestedTarget, skillNames ?? []);
         if (p.isCancel(result)) continue;
         if ((result as string[]).length === 0) continue;
         skillNames = result as string[];
@@ -175,15 +249,18 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
       );
 
       if (disabledTargets.size === Object.keys(AGENT_PATHS).length) {
-        p.note('No target supports every selected skill. Choose a different set of skills.', 'Compatibility');
+        p.note(
+          `No target supports every selected skill. Conflicting skills: ${formatSelectionConflict(selectedSkills)}. Choose a different set of skills.`,
+          'Compatibility',
+        );
         continue selectionLoop;
       }
 
       target = await resolveBrowseTarget(requestedTarget, () => pickTarget({ disabledTargets }));
-      const preflight = getSkillAvailability(selectedSkills, target);
-      if (preflight.unavailable.length > 0) {
+      const selectionAvailability = getSkillAvailability(selectedSkills, target);
+      if (selectionAvailability.unavailable.length > 0) {
         p.note(
-          `${preflight.unavailable.map(skill => skill.name).join(', ')} cannot be installed for ${target}. Choose a different set of skills.`,
+          `${selectionAvailability.unavailable.map(skill => `${skill.name} (supports: ${compatibilityLabel(skill)})`).join('; ')} cannot be installed for ${target}. Choose a different set of skills.`,
           'Compatibility',
         );
         continue selectionLoop;
@@ -206,6 +283,13 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
       process.exit(0);
     }
 
+    const batch = await prepareBatchInstall(skillNames, target!);
+    if (!batch.success) {
+      p.log.error(`Install preflight failed for ${batch.failure!.name}: ${batch.failure!.error.message}`);
+      process.exit(1);
+      return;
+    }
+
     const successes: string[] = [];
     const failures: { name: string; error: string }[] = [];
     const total = skillNames.length;
@@ -216,7 +300,7 @@ export async function runBrowseTUI(opts: { target?: string; noBanner?: boolean }
       const sp = p.spinner(buildSpinnerOptions());
       const progress = renderProgressBar(i, total);
       sp.start(`${progress}  ${name}`);
-      const result = await installSkill(name, target!);
+      const result = await installPreparedSkill(batch.prepared[i]);
       const finalProgress = renderProgressBar(i + 1, total);
       if (result.success) {
         sp.stop(`${finalProgress}  ${chalk.hex(BRAND_PURPLE).bold(name)} ${chalk.dim('installed')}`);
