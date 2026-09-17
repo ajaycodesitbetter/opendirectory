@@ -10,7 +10,7 @@ export interface SkillFrontmatterDocument extends FrontmatterDocument {
   compatibility: CompatibilityState;
 }
 
-const FRONTMATTER_PATTERN = /^---[^\S\r\n]*\r?\n([\s\S]*?)(?:\r?\n)?---[^\S\r\n]*(?:\r?\n|$)/;
+const FRONTMATTER_PATTERN = /^---[^\S\r\n]*\r?\n([\s\S]*?)\r?\n---[^\S\r\n]*(?:\r?\n|$)/;
 const FRONTMATTER_OPENING_PATTERN = /^---[^\S\r\n]*(?:\r?\n|$)/;
 
 export function parseFrontmatter(source: string): FrontmatterDocument {
